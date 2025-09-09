@@ -260,6 +260,34 @@ def score():
             if session['current_bowler_index'] >= 0 and not is_run_out:
                 session['bowlers'][session['current_bowler_index']]['wickets'] += 1
             
+            # Handle runout cases - determine who should be on strike
+            if is_wicket and is_run_out:
+                # Determine which batsman was run out
+                run_out_striker = (run_out_batsman == session['batsmen'][session['striker_index']]['name'])
+                run_out_non_striker = (run_out_batsman == session['batsmen'][session['non_striker_index']]['name']) if session['non_striker_index'] != -1 else False
+                
+                # If striker was run out and odd runs were scored, non-striker should stay on strike
+                if run_out_striker and runs % 2 == 1:
+                    # Non-striker becomes striker, new batsman comes at non-strike
+                    session['striker_index'] = session['non_striker_index']
+                    session['non_striker_index'] = -1  # Flag for new batsman at non-strike
+                
+                # If non-striker was run out and even runs were scored, striker should stay on strike
+                elif run_out_non_striker and runs % 2 == 0:
+                    # Striker stays on strike, new batsman comes at non-strike
+                    session['non_striker_index'] = -1  # Flag for new batsman at non-strike
+                
+                # If non-striker was run out and odd runs were scored, new batsman should come at strike
+                elif run_out_non_striker and runs % 2 == 1:
+                    # Current striker moves to non-strike, new batsman comes at strike
+                    session['non_striker_index'] = session['striker_index']  # Current striker moves to non-strike
+                    session['striker_index'] = -1  # Flag for new batsman at strike
+                
+                # If striker was run out and even runs were scored, new batsman should come at strike
+                elif run_out_striker and runs % 2 == 0:
+                    # New batsman comes at striker position, non-striker stays
+                    session['striker_index'] = -1  # Flag for new batsman at strike
+
             # Logic for "last man standing"
             batting_team_players = session['team1'] if session['batting_team'] == session['team1_name'] else session['team2']
             total_players = len(batting_team_players)
@@ -299,6 +327,10 @@ def score():
                 # Check if this was the last ball of the over
                 if session['current_ball'] >= 6:
                     session['last_ball_wicket'] = True
+                    batting_team_players = session['team1'] if session['batting_team'] == session['team1_name'] else session['team2'] 
+                    wickets_remaining = len(batting_team_players) - session['wickets']
+                    if wickets_remaining > 1:
+                        session['striker_index'], session['non_striker_index'] = session['non_striker_index'], session['striker_index']
                 
                 # We need to find the correct striker. If the wicket was a runout
                 # and the striker was runout, a new batsman comes in for the striker's slot.
@@ -430,17 +462,25 @@ def new_batsman():
             "wicket_type": None
         })
         
-        # Find which position the new batsman takes
-        current_batsmen = [b for b in session['batsmen'] if not b['out']]
-        if len(current_batsmen) == 2:
-            # A batsman at the crease got out. We need to find which one
-            out_batsman_name = [b for b in session['batsmen'] if b['out']][-1]['name']
-            if session['batsmen'][session['striker_index']]['name'] == out_batsman_name:
-                session['striker_index'] = len(session['batsmen']) - 1
-            else:
-                session['non_striker_index'] = len(session['batsmen']) - 1
-        else: # This case is for the first two batsmen
+        # Find which position the new batsman takes based on session flags
+        if session.get('striker_index') == -1:
+            # New batsman comes at striker position
             session['striker_index'] = len(session['batsmen']) - 1
+        elif session.get('non_striker_index') == -1:
+            # New batsman comes at non-strike position
+            session['non_striker_index'] = len(session['batsmen']) - 1
+        else:
+            # Default behavior: determine position based on who got out
+            current_batsmen = [b for b in session['batsmen'] if not b['out']]
+            if len(current_batsmen) == 2:
+                # A batsman at the crease got out. We need to find which one
+                out_batsman_name = [b for b in session['batsmen'] if b['out']][-1]['name']
+                if session['batsmen'][session['striker_index']]['name'] == out_batsman_name:
+                    session['striker_index'] = len(session['batsmen']) - 1
+                else:
+                    session['non_striker_index'] = len(session['batsmen']) - 1
+            else: # This case is for the first two batsmen
+                session['striker_index'] = len(session['batsmen']) - 1
         
         # If wicket happened on the last ball of the over
         if session.get('last_ball_wicket', False) and session['current_ball'] >= 6:
@@ -539,6 +579,15 @@ def innings_end():
                               win_type=session['win_type'],
                               team1_name=session['team1_name'],
                               team2_name=session['team2_name'])
+    
+@app.route('/switch_strike', methods=['POST'])
+def switch_strike():
+    # Simply swap the striker and non-striker
+    if 'non_striker_index' in session and session['non_striker_index'] != -1:
+        session['striker_index'], session['non_striker_index'] = session['non_striker_index'], session['striker_index']
+        session.modified = True
+    
+    return redirect(url_for('score'))
 
 @app.route('/download_summary')
 def download_summary():
